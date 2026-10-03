@@ -1,0 +1,106 @@
+{
+  "measurement": "recorded C1 streaming generation estimate, excludes TTFT",
+  "new_gpu_measurements": false,
+  "quality_scope": "These timings do not establish model fidelity",
+  "results": [
+    {
+      "label": "generic-64k-48kinput",
+      "model": "qwen-ptqr",
+      "image_id": null,
+      "actual_input_tokens": 48081,
+      "output_tokens": 512,
+      "samples": 3,
+      "generation_estimate_tokens_per_second": [
+        42.94292757850596,
+        42.57292634599782,
+        42.579327871104745
+      ],
+      "median_generation_estimate": 42.579327871104745,
+      "minimum_generation_estimate": 42.57292634599782,
+      "ttft_seconds_in_record_order": [
+        152.4193249230011,
+        151.0415933789991,
+        18.044206116996065
+      ],
+      "wall_output_tokens_per_second": [
+        3.1158904710518995,
+        3.140244236873497,
+        17.040845059268452
+      ],
+      "target_tokens_per_second": 80.0,
+      "median_target_met": false,
+      "all_samples_target_met": false,
+      "sources": [
+        "generic-48k.jsonl:1",
+        "generic-48k.jsonl:2",
+        "generic-48k.jsonl:3"
+      ]
+    },
+    {
+      "label": "cdna2-64k-48kinput",
+      "model": "qwen-ptqr",
+      "image_id": "sha256:ea0be21b9b8fdb9390f521f7d451a35392c695e5843989c2e049622c4c6a83b3",
+      "actual_input_tokens": 48081,
+      "output_tokens": 512,
+      "samples": 3,
+      "generation_estimate_tokens_per_second": [
+        87.67884287466775,
+        84.7896238001519,
+        84.89118878840284
+      ],
+      "median_generation_estimate": 84.89118878840284,
+      "minimum_generation_estimate": 84.7896238001519,
+      "ttft_seconds_in_record_order": [
+        37.64457733999734,
+        36.591320758998336,
+        3.5068973369998275
+      ],
+      "wall_output_tokens_per_second": [
+        11.777471635405767,
+        12.01366112347553,
+        53.74485237749332
+      ],
+      "target_tokens_per_second": 80.0,
+      "median_target_met": true,
+      "all_samples_target_met": true,
+      "sources": [
+        "cdna2-48k.jsonl:1",
+        "cdna2-48k.jsonl:2",
+        "cdna2-48k.jsonl:3"
+      ]
+    },
+    {
+      "label": "cdna2-128k-120kinput",
+      "model": "qwen-ptqr",
+      "image_id": "sha256:8df86c75bfb56d3654bca7dee59838c323b6250eb7649a0f28de9c13c930d79a",
+      "actual_input_tokens": 120081,
+      "output_tokens": 512,
+      "samples": 3,
+      "generation_estimate_tokens_per_second": [
+        48.53415187958409,
+        46.74723688703959,
+        47.40776154588507
+      ],
+      "median_generation_estimate": 47.40776154588507,
+      "minimum_generation_estimate": 46.74723688703959,
+      "ttft_seconds_in_record_order": [
+        145.15633322800568,
+        143.12997798599827,
+        5.42006219799805
+      ],
+      "wall_output_tokens_per_second": [
+        3.288688601781522,
+        3.323353130898165,
+        31.606854466417417
+      ],
+      "target_tokens_per_second": 80.0,
+      "median_target_met": false,
+      "all_samples_target_met": false,
+      "sources": [
+        "cdna2-120k.jsonl:1",
+        "cdna2-120k.jsonl:2",
+        "cdna2-120k.jsonl:3"
+      ]
+    }
+  ]
+}
