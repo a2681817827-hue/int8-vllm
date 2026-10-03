@@ -1,0 +1,210 @@
+[
+  {
+    "index": 0,
+    "expected": "300",
+    "output": "300",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 1,
+    "expected": "302",
+    "output": "302",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 2,
+    "expected": "304",
+    "output": "304",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 3,
+    "expected": "306",
+    "output": "306",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 4,
+    "expected": "308",
+    "output": "308",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 5,
+    "expected": "310",
+    "output": "310",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 6,
+    "expected": "312",
+    "output": "312",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 7,
+    "expected": "314",
+    "output": "314",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 8,
+    "expected": "316",
+    "output": "316",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 9,
+    "expected": "318",
+    "output": "318",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 10,
+    "expected": "320",
+    "output": "320",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 11,
+    "expected": "322",
+    "output": "322",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 12,
+    "expected": "324",
+    "output": "324",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 13,
+    "expected": "326",
+    "output": "326",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 14,
+    "expected": "328",
+    "output": "328",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  },
+  {
+    "index": 15,
+    "expected": "330",
+    "output": "330",
+    "passed": true,
+    "usage": {
+      "prompt_tokens": 27,
+      "total_tokens": 31,
+      "completion_tokens": 4,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    }
+  }
+]

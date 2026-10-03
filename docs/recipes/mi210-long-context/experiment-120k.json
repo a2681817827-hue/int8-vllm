@@ -1,0 +1,42 @@
+{
+  "exp": "MI210_CDNA2_G128_128K_SERVICE_120K_INPUT",
+  "hardware": "1x MI210 gfx90a 64GB 300W",
+  "context_limit": 131072,
+  "actual_input_tokens": 120081,
+  "completion_tokens_per_request": 512,
+  "tp": 1,
+  "client_concurrency": 1,
+  "server_max_seqs": 8,
+  "spec_tokens": 13,
+  "kv": "int8_block_g128 target+draft",
+  "mamba": "float32",
+  "image_id": "sha256:8df86c75bfb56d3654bca7dee59838c323b6250eb7649a0f28de9c13c930d79a",
+  "ttft_seconds": [
+    145.15633322800568,
+    143.12997798599827,
+    5.42006219799805
+  ],
+  "decode_tokens_per_second_estimate": [
+    48.53415187958409,
+    46.74723688703959,
+    47.40776154588507
+  ],
+  "wall_output_tokens_per_second": [
+    3.288688601781522,
+    3.323353130898165,
+    31.606854466417417
+  ],
+  "needle_present": [
+    true,
+    true,
+    true
+  ],
+  "baseline_120k": null,
+  "quality_scope": "retrieval + coherent output smoke; no full model fidelity evaluation",
+  "parallel_gate": "16 distinct additions, concurrency8, all correct",
+  "vision_gate": "red image recognized",
+  "verdict": "128K service runs and all 120081-token requests complete; median generation estimate 47.41 tok/s, no 120K baseline speedup claim",
+  "raw": "docs/recipes/mi210-long-context/cdna2-120k.jsonl",
+  "final_retrieval_actual_tokens": 120037,
+  "final_retrieval_expected_code_returned": true
+}
