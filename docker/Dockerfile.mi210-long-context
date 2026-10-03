@@ -1,0 +1,12 @@
+# Extend the locally qualified MI210 stack without changing pinned dependencies.
+ARG BASE_IMAGE=int8-vllm-mi210:32k-vision-optimized
+FROM ${BASE_IMAGE}
+WORKDIR /opt/int8-vllm
+COPY vllm/v1/attention/ops/triton_unified_attention.py vllm/v1/attention/ops/triton_unified_attention.py
+COPY vllm/v1/attention/ops/gfx90a_g128_gluon_prefill.py vllm/v1/attention/ops/gfx90a_g128_gluon_prefill.py
+COPY vllm/v1/attention/ops/gfx90a_g128_gluon_decode.py vllm/v1/attention/ops/gfx90a_g128_gluon_decode.py
+COPY docker/mi210/micro.py docker/mi210/operator_sweep.py docker/mi210/long_boundaries.py docker/mi210/smoke.py docker/mi210/
+COPY scripts/serve_mi210_32k_ab.sh scripts/serve_mi210_32k_ab.sh
+COPY scripts/serve_mi210_long_context.sh scripts/serve_mi210_long_context.sh
+ENV VLLM_UA_3D_MAXQ=16 VLLM_G128_PREFILL_GLUON=1 VLLM_G128_PREFILL_GLUON_MMA=bf16 VLLM_G128_PREFILL_CDNA2=1 VLLM_G128_PREFILL_CDNA2_TILE=64 VLLM_UA_TILE=32 VLLM_G128_GLUON=64 VLLM_G128_GLUON_MMA=bf16 VLLM_G128_DECODE_CDNA2=1 VLLM_G128_DECODE_CDNA2_TILE=64
+RUN .venv/bin/python -m compileall -q vllm/v1/attention/ops/gfx90a_g128_gluon_prefill.py vllm/v1/attention/ops/gfx90a_g128_gluon_decode.py docker/mi210/micro.py docker/mi210/operator_sweep.py

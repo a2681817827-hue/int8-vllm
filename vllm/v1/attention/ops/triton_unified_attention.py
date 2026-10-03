@@ -521,14 +521,104 @@ def kernel_unified_attention(
 
         # G8: dequant K/V per 8-dim group before the dots.
         if USE_G8_2GRP:
-            # Two-group fast path: split the bf16 tiles into halves and
-            # fold the (TILE,)-sized group scales into the partial dots
-            # below — no full-tile dequant multiply, no (HEAD, TILE)
-            # scale gather (which redundantly loaded each scalar
-            # G8_GROUP times and materialized fp32 intermediates).
+            # Two-group fast path: pointer-offset half-loads in place of a
+            # full-tile load + permute/reshape/split (which forced a
+            # shared-memory layout conversion per tile). Block-pointer
+            # form with the RUNTIME sequence bound as the axis-0 shape:
+            # boundary_check masks ragged tails exactly like tile_mask did.
+            # Tiles never straddle a KV page (BLOCK_SIZE % TILE_SIZE == 0,
+            # tiles page-aligned), so one scalar base per tile + the
+            # regular token stride describes the whole tile.
             H2: tl.constexpr = HEAD_SIZE // 2
-            k0, k1 = tl.split(tl.permute(tl.reshape(K, (2, H2, TILE_SIZE)), (1, 2, 0)))
-            v0, v1 = tl.split(tl.permute(tl.reshape(V, (TILE_SIZE, 2, H2)), (0, 2, 1)))
+            kv_valid = tl.minimum(
+                TILE_SIZE, max_seq_prefix_len - j * TILE_SIZE
+            )
+            first_tok_off = (j * TILE_SIZE) % BLOCK_SIZE
+            first_blk_scalar = tl.load(
+                block_tables_ptr
+                + block_table_offset
+                + (j * TILE_SIZE) // BLOCK_SIZE
+            ).to(tl.int64)
+            kv_base_k = (
+                key_cache_ptr
+                + first_blk_scalar * stride_k_cache_0
+                + kv_head_idx * stride_k_cache_2
+                + first_tok_off * stride_k_cache_1
+            )
+            kv_base_v = (
+                value_cache_ptr
+                + first_blk_scalar * stride_v_cache_0
+                + kv_head_idx * stride_v_cache_2
+                + first_tok_off * stride_v_cache_1
+            )
+            k0 = _cast_kv_tile(
+                tl.load(
+                    tl.make_block_ptr(
+                        base=kv_base_k,
+                        shape=(kv_valid, H2),
+                        strides=(stride_k_cache_1, 1),
+                        offsets=(0, 0),
+                        block_shape=(TILE_SIZE, H2),
+                        order=(1, 0),
+                    ),
+                    boundary_check=(0,),
+                    padding_option="zero",
+                ).T,
+                Q,
+                k_scale,
+                KV_QUANT_MODE,
+            )
+            k1 = _cast_kv_tile(
+                tl.load(
+                    tl.make_block_ptr(
+                        base=kv_base_k + H2,
+                        shape=(kv_valid, H2),
+                        strides=(stride_k_cache_1, 1),
+                        offsets=(0, 0),
+                        block_shape=(TILE_SIZE, H2),
+                        order=(1, 0),
+                    ),
+                    boundary_check=(0,),
+                    padding_option="zero",
+                ).T,
+                Q,
+                k_scale,
+                KV_QUANT_MODE,
+            )
+            v0 = _cast_kv_tile(
+                tl.load(
+                    tl.make_block_ptr(
+                        base=kv_base_v,
+                        shape=(kv_valid, H2),
+                        strides=(stride_v_cache_1, 1),
+                        offsets=(0, 0),
+                        block_shape=(TILE_SIZE, H2),
+                        order=(1, 0),
+                    ),
+                    boundary_check=(0,),
+                    padding_option="zero",
+                ),
+                Q,
+                v_scale,
+                KV_QUANT_MODE,
+            )
+            v1 = _cast_kv_tile(
+                tl.load(
+                    tl.make_block_ptr(
+                        base=kv_base_v + H2,
+                        shape=(kv_valid, H2),
+                        strides=(stride_v_cache_1, 1),
+                        offsets=(0, 0),
+                        block_shape=(TILE_SIZE, H2),
+                        order=(1, 0),
+                    ),
+                    boundary_check=(0,),
+                    padding_option="zero",
+                ),
+                Q,
+                v_scale,
+                KV_QUANT_MODE,
+            )
             g8_base = (
                 physical_block_idx * stride_g8_blk
                 + kv_head_idx * stride_g8_head
@@ -913,6 +1003,9 @@ def _get_tile_size(
     return 16 if element_size >= 2 else 32
 
 
+_GEO_DUMPED = False
+
+
 def unified_attention(
     q,
     k,
@@ -1042,6 +1135,29 @@ def unified_attention(
     use_qq_bias = qq_bias is not None
 
     block_size = v.shape[1]
+
+    # VLLM_UA_GEODUMP: one-shot engine-geometry dump (strides, shapes,
+    # alignment) at the first g8 call — reconciles bench constructions
+    # with the real layout (the i32-unpack engine failure taught that the
+    # hard way).
+    if os.environ.get("VLLM_UA_GEODUMP") and not _GEO_DUMPED:
+        try:
+            UnifiedAttentionGeoDump = True  # noqa: F841
+            print(
+                f"UA_GEO q={tuple(q.shape)}{q.dtype} "
+                f"k={tuple(k.shape)}{k.dtype} kstride={k.stride()} "
+                f"vstride={v.stride()} kptr%4={k.data_ptr() % 4} "
+                f"vptr%4={v.data_ptr() % 4} blk={block_size} "
+                f"g8_k={tuple(g8_k_scale.shape) if g8_k_scale is not None else None} "
+                f"g8kstride={g8_k_scale.stride() if g8_k_scale is not None else None} "
+                f"maxq={max_seqlen_q} nseq={len(seqused_k)} "
+                f"quant={kv_quant_mode}",
+                flush=True,
+            )
+        except Exception:
+            pass
+        finally:
+            globals()["_GEO_DUMPED"] = True
     num_seqs = len(seqused_k)
     num_query_heads = q.shape[1]
     num_kv_heads = k.shape[2]
@@ -1060,6 +1176,22 @@ def unified_attention(
     _env_stages = os.environ.get("VLLM_GFX908_ATTN_STAGES")
     launch_num_warps: int | None = int(_env_warps) if _env_warps else None
     launch_num_stages: int | None = int(_env_stages) if _env_stages else None
+
+    # gfx908 prefill tuning levers (GOALOPT): the generic defaults
+    # (BLOCK_M=16 -> BLOCK_Q=2 at GQA 6:1, KV tile 32, 2 warps) leave the
+    # 2D prefill kernel latency-bound at long context on MI100. These envs
+    # only apply when the batch is prefill-shaped (max_seqlen_q > 1).
+    if max_seqlen_q > 1:
+        _pf_blockm = os.environ.get("VLLM_UA_PREFILL_BLOCKM")
+        if _pf_blockm:
+            BLOCK_M = max(16, int(_pf_blockm))
+            BLOCK_Q = BLOCK_M // num_queries_per_kv
+        _pf_warps = os.environ.get("VLLM_UA_PREFILL_WARPS")
+        if _pf_warps:
+            launch_num_warps = int(_pf_warps)
+        _pf_stages = os.environ.get("VLLM_UA_PREFILL_STAGES")
+        if _pf_stages:
+            launch_num_stages = int(_pf_stages)
 
     # head_size 256 with many query rows per sequence (e.g. diffusion-gemma
     # bidirectional canvas passes) is prefill-shaped, but the decode-oriented
@@ -1101,6 +1233,11 @@ def unified_attention(
     TILE_SIZE_PREFILL = _get_tile_size(
         head_size, sliding_window_val, q.element_size(), is_prefill=True
     )
+    # GOALOPT prefill KV-tile lever (gfx908): wider KV tiles cut the
+    # per-CTA iteration count at long context.
+    _pf_tile = os.environ.get("VLLM_UA_PREFILL_TILE")
+    if _pf_tile:
+        TILE_SIZE_PREFILL = int(_pf_tile)
     # VLLM_UA_TILE: env override for the decode KV tile (E10 tuning lever;
     # default unchanged). Wider tiles halve iteration count + scale loads
     # on the g8 partial-dot path.
@@ -1259,6 +1396,431 @@ def unified_attention(
         launch_kwargs["num_warps"] = launch_num_warps
     if launch_num_stages is not None:
         launch_kwargs["num_stages"] = launch_num_stages
+
+    # DFlash2's noncausal sliding verify attends only to the tail window.
+    # Split that window across CTAs instead of scanning the full 32k prefix.
+    _draft_gluon_conds = (
+        os.environ.get("VLLM_G128_DRAFT_GLUON") == "1",
+        use_3d,
+        use_g8,
+        kv_quant_mode == KVQuantMode.INT8_BLOCK_G128,
+        use_g8 and g8_k_scale.shape[-1] == 1,
+        head_size == 128,
+        num_queries_per_kv == 4,
+        num_kv_heads == 2,
+        BLOCK_Q == 4,
+        max_seqlen_q <= 8,
+        q.dtype == torch.bfloat16,
+        q.stride(2) == 1,
+        block_size % 32 == 0,
+        tile_size == 32,
+        not use_causal,
+        # Draft SWA plumbing has used both conventions across revisions
+        # (window_size 2047 -> SLIDING 2048, and 2048 -> 2049); the core is
+        # parameterized on the span either way. Capture-time debug showed
+        # live calls arriving with 2048, which the previous 2049-only check
+        # silently dropped onto the generic 3D kernel.
+        sliding_window_val in (2048, 2049),
+        not use_per_seq_causal,
+        not use_mm_prefix,
+        not use_rswa,
+        not use_alibi_slopes,
+        not use_qq_bias,
+        sinks is None,
+        softcap == 0,
+        output_scale is None,
+        q_descale is None,
+        k_descale is None,
+        v_descale is None,
+        k.stride(3) == 1,
+        v.stride(3) == 1,
+        use_g8 and g8_k_scale.stride(3) == 1,
+        use_g8 and g8_k_scale.stride() == g8_v_scale.stride(),
+        block_table.stride(1) == 1,
+    )
+    if os.environ.get("VLLM_DRAFT_GUARD_DEBUG"):
+        _names = (
+            "env", "use_3d", "use_g8", "quant_mode", "scales1", "head128",
+            "gqa4", "nkv2", "blockq4", "maxq8", "bf16", "qstride",
+            "blk32", "tile32", "noncausal", "win2049", "noperseq",
+            "nommprefix", "norswa", "noalibi", "noqqbias", "nosinks",
+            "nosoftcap", "nooutscale", "noqdescale", "nokdescale",
+            "novdescale", "kstride", "vstride", "gsstride", "gsame",
+            "btstride",
+        )
+        _miss = [n for n, c in zip(_names, _draft_gluon_conds) if not c]
+        print(f"[DRAFT-GUARD] q={q.shape[0]} maxq={max_seqlen_q} "
+              f"head={head_size} gqa={num_queries_per_kv} "
+              f"win={sliding_window_val} causal={use_causal} "
+              f"seqs={num_seqs} fires={all(_draft_gluon_conds)} "
+              f"miss={_miss}", flush=True)
+    if all(_draft_gluon_conds):
+        from vllm.v1.attention.ops.gfx908_g128_gluon_draft import draft_g128_core
+
+        # GOALOPT: fp16 MFMA at 2x the bf16 rate on gfx908. The draft core
+        # dequantizes K/V explicitly, so fp16 keeps the same exact values
+        # (sk*int8 products fit fp16's 11-bit mantissa at production
+        # scales; gates decide). VLLM_G128_DRAFT_GLUON_MMA: fp16 | bf16.
+        from triton.experimental.gluon import language as _gl
+
+        _draft_mode = os.environ.get("VLLM_G128_DRAFT_GLUON_MMA", "fp16")
+        _draft_dt = _gl.float16 if _draft_mode == "fp16" else _gl.bfloat16
+
+        draft_g128_core[(
+            q.shape[0] // 8 + num_seqs,
+            num_kv_heads,
+            actual_num_splits,
+        )](
+            q, k, v, g8_k_scale, g8_v_scale, block_table, seqused_k,
+            cu_seqlens_q, softmax_segm_output, softmax_segm_max,
+            softmax_segm_expsum,
+            SCALE=softmax_scale,
+            WINDOW=sliding_window_val,
+            NUM_SEQS=num_seqs,
+            NUM_QHEADS=num_query_heads,
+            NQ_PER_KV=num_queries_per_kv,
+            BLOCK_SIZE=block_size,
+            SPLITS=actual_num_splits,
+            BT_STRIDE=block_table.stride(0),
+            Q_STRIDE0=q.stride(0),
+            Q_STRIDE1=q.stride(1),
+            K_STRIDE0=k.stride(0),
+            K_STRIDE1=k.stride(1),
+            K_STRIDE2=k.stride(2),
+            V_STRIDE0=v.stride(0),
+            V_STRIDE1=v.stride(1),
+            V_STRIDE2=v.stride(2),
+            S_STRIDE0=g8_k_scale.stride(0),
+            S_STRIDE1=g8_k_scale.stride(1),
+            S_STRIDE2=g8_k_scale.stride(2),
+            MMA_DT=_draft_dt,
+            MMA_FP16=(_draft_mode == "fp16"),
+            num_warps=4,
+        )
+        reduce_segments[(q.shape[0], num_query_heads)](
+            output_ptr=out,
+            segm_output_ptr=softmax_segm_output,
+            segm_max_ptr=softmax_segm_max,
+            segm_expsum_ptr=softmax_segm_expsum,
+            seq_lens_ptr=seqused_k,
+            num_seqs=num_seqs,
+            num_query_heads=num_query_heads,
+            out_scale_inv=1.0,
+            output_stride_0=out.stride(0),
+            output_stride_1=out.stride(1),
+            block_table_stride=block_table.stride(0),
+            TILE_SIZE=TILE_SIZE_DECODE,
+            HEAD_SIZE=head_size,
+            HEAD_SIZE_PADDED=head_size_padded,
+            query_start_len_ptr=cu_seqlens_q,
+            BLOCK_Q=8,
+            NUM_SEGMENTS_PER_SEQ=actual_num_splits,
+            USE_FP8=False,
+        )
+        return
+
+    # Gfx908 grouped-int8 decode: reuse each vectorized KV tile across the
+    # verify query rows. Prefill and unsupported shapes use the general kernel.
+    g128_gluon_mode = os.environ.get("VLLM_G128_GLUON")
+    cdna2_decode_requested = False
+    if (os.environ.get("VLLM_G128_DECODE_CDNA2") == "1"
+            and current_platform.is_rocm()):
+        from vllm.platforms.rocm import on_gfx90a
+        cdna2_decode_requested = on_gfx90a()
+    if (
+        g128_gluon_mode in ("1", "32", "64")
+        and use_3d
+        and use_g8
+        and kv_quant_mode == KVQuantMode.INT8_BLOCK_G128
+        and g8_k_scale.shape[-1] == 2
+        and head_size == 256
+        and num_queries_per_kv == 6
+        and (num_kv_heads == 1 or (cdna2_decode_requested and num_kv_heads == 4))
+        and BLOCK_Q == 2
+        and q.dtype == torch.bfloat16
+        and q.stride(2) == 1
+        and block_size % 32 == 0
+        and tile_size == 32
+        and use_causal
+        and sliding_window_val == 0
+        and not use_per_seq_causal
+        and not use_mm_prefix
+        and not use_rswa
+        and not use_alibi_slopes
+        and not use_qq_bias
+        and sinks is None
+        and softcap == 0
+        and output_scale is None
+        and q_descale is None
+        and k_descale is None
+        and v_descale is None
+        and k.stride(3) == 1
+        and v.stride(3) == 1
+        and g8_k_scale.stride(3) == 1
+        and g8_k_scale.stride() == g8_v_scale.stride()
+        and block_table.stride(1) == 1
+    ):
+        if g128_gluon_mode != "32":
+            use_cdna2_decode = cdna2_decode_requested
+            if use_cdna2_decode:
+                from vllm.v1.attention.ops.gfx90a_g128_gluon_decode import (
+                    g128_core_cdna2 as g128_core,
+                )
+            else:
+                from vllm.v1.attention.ops.gfx908_g128_gluon_m64 import g128_core
+
+            query_block = 10
+            num_warps = 4
+        else:
+            from vllm.v1.attention.ops.gfx908_g128_gluon import g128_core
+
+            query_block = 5
+            num_warps = 2
+
+        # GOALOPT: fp16 MFMA at 2x the bf16 rate on gfx908 (int8 K/V and
+        # bf16 Q exact in fp16). VLLM_G128_GLUON_MMA selects fp16 | bf16.
+        from triton.experimental.gluon import language as _gl
+
+        _m64_mode = os.environ.get("VLLM_G128_GLUON_MMA", "fp16")
+        _m64_dt = _gl.float16 if _m64_mode == "fp16" else _gl.bfloat16
+        # The legacy 32-row core has a fixed BF16 MFMA signature.
+        mma_kwargs = (
+            dict(MMA_DT=_m64_dt, MMA_FP16=(_m64_mode == "fp16"))
+            if g128_gluon_mode != "32"
+            else {}
+        )
+
+        decode_reduce_tile = TILE_SIZE_DECODE
+        if g128_gluon_mode != "32" and use_cdna2_decode:
+            decode_reduce_tile = int(os.environ.get("VLLM_G128_DECODE_CDNA2_TILE", "32"))
+            if decode_reduce_tile not in (32, 64) or block_size % decode_reduce_tile:
+                raise ValueError("CDNA2 decode tile must divide the KV page")
+            mma_kwargs["KV_TILE"] = decode_reduce_tile
+        g128_core[(
+            q.shape[0] // query_block + num_seqs,
+            num_kv_heads,
+            actual_num_splits,
+        )](
+            q, k, v, g8_k_scale, g8_v_scale, block_table, seqused_k,
+            cu_seqlens_q, softmax_segm_output, softmax_segm_max,
+            softmax_segm_expsum,
+            SCALE=softmax_scale,
+            NUM_SEQS=num_seqs,
+            NUM_QHEADS=num_query_heads,
+            NQ_PER_KV=num_queries_per_kv,
+            BLOCK_SIZE=block_size,
+            SPLITS=actual_num_splits,
+            BT_STRIDE=block_table.stride(0),
+            Q_STRIDE0=q.stride(0),
+            Q_STRIDE1=q.stride(1),
+            K_STRIDE0=k.stride(0),
+            K_STRIDE1=k.stride(1),
+            K_STRIDE2=k.stride(2),
+            V_STRIDE0=v.stride(0),
+            V_STRIDE1=v.stride(1),
+            V_STRIDE2=v.stride(2),
+            S_STRIDE0=g8_k_scale.stride(0),
+            S_STRIDE1=g8_k_scale.stride(1),
+            S_STRIDE2=g8_k_scale.stride(2),
+            **mma_kwargs,
+            num_warps=num_warps,
+        )
+        # GOALOPT: Gluon split-KV reduce (VLLM_G128_REDUCE_GLUON=1) - the
+        # gfx908 port measured 2.5x over Triton reduce_segments at this
+        # shape with 1-ulp numerics.
+        if (
+            os.environ.get("VLLM_G128_REDUCE_GLUON") == "1"
+            and head_size % 128 == 0
+            and head_size_padded == head_size
+        ):
+            from vllm.v1.attention.ops.gfx908_g128_gluon_reduce import (
+                reduce_segments_gfx908,
+            )
+
+            reduce_segments_gfx908[(q.shape[0], num_query_heads)](
+                out,
+                softmax_segm_output,
+                softmax_segm_max,
+                softmax_segm_expsum,
+                seqused_k,
+                cu_seqlens_q,
+                num_seqs,
+                OUT_STRIDE0=out.stride(0),
+                OUT_STRIDE1=out.stride(1),
+                H=num_query_heads,
+                SPLITS=actual_num_splits,
+                TILE=decode_reduce_tile,
+                D=head_size,
+                num_warps=4,
+            )
+            return
+        reduce_segments[(q.shape[0], num_query_heads)](
+            output_ptr=out,
+            segm_output_ptr=softmax_segm_output,
+            segm_max_ptr=softmax_segm_max,
+            segm_expsum_ptr=softmax_segm_expsum,
+            seq_lens_ptr=seqused_k,
+            num_seqs=num_seqs,
+            num_query_heads=num_query_heads,
+            out_scale_inv=1.0,
+            output_stride_0=out.stride(0),
+            output_stride_1=out.stride(1),
+            block_table_stride=block_table.stride(0),
+            TILE_SIZE=decode_reduce_tile,
+            HEAD_SIZE=head_size,
+            HEAD_SIZE_PADDED=head_size_padded,
+            query_start_len_ptr=cu_seqlens_q,
+            BLOCK_Q=query_block,
+            NUM_SEGMENTS_PER_SEQ=actual_num_splits,
+            USE_FP8=False,
+        )
+        return
+
+    # Gfx908 grouped-int8 prefill (GOALOPT): the generic 2D kernel runs at
+    # ~5 TFLOP/s on the 2048q x long-context g128 shape while the MFMA
+    # decode core's math reaches ~8x that on the same packed format. Same
+    # guard structure as the decode core, inverted to the 2D (prefill-
+    # shaped) batch: 64 query tokens x one head per CTA, no split-K.
+    cdna2_prefill_requested = False
+    if (os.environ.get("VLLM_G128_PREFILL_CDNA2") == "1"
+            and current_platform.is_rocm()):
+        from vllm.platforms.rocm import on_gfx90a
+        cdna2_prefill_requested = on_gfx90a()
+    if (
+        os.environ.get("VLLM_G128_PREFILL_GLUON") == "1"
+        and not use_3d
+        and max_seqlen_q >= 256
+        and use_g8
+        and kv_quant_mode == KVQuantMode.INT8_BLOCK_G128
+        and g8_k_scale.shape[-1] == 2
+        and head_size == 256
+        and num_queries_per_kv == 6
+        and (num_kv_heads == 1 or (cdna2_prefill_requested and num_kv_heads == 4))
+        and q.dtype == torch.bfloat16
+        and q.stride(2) == 1
+        and out.stride(2) == 1
+        and block_size % 32 == 0
+        and use_causal
+        and not use_per_seq_causal
+        and sliding_window_val == 0
+        and not use_mm_prefix
+        and not use_rswa
+        and not use_alibi_slopes
+        and not use_qq_bias
+        and sinks is None
+        and softcap == 0
+        and output_scale is None
+        and q_descale is None
+        and k_descale is None
+        and v_descale is None
+        and k.stride(3) == 1
+        and v.stride(3) == 1
+        and g8_k_scale.stride(3) == 1
+        and g8_k_scale.stride() == g8_v_scale.stride()
+        and block_table.stride(1) == 1
+    ):
+        use_cdna2_prefill = cdna2_prefill_requested
+        if use_cdna2_prefill:
+            from vllm.v1.attention.ops.gfx90a_g128_gluon_prefill import (
+                g128_prefill_core_cdna2 as g128_prefill_core,
+            )
+        else:
+            from vllm.v1.attention.ops.gfx908_g128_gluon_prefill import (
+                g128_prefill_core,
+            )
+
+        # gfx908 fp16 MFMA runs at 2x the bf16 rate (measured 1.98x,
+        # scripts/bench_mfma_rate.py; CDNA1 quirk). int8 K/V values and
+        # bf16 Q activations are exact in fp16, so the fp32-accumulated
+        # dots see identical operand values - the numerics stay in the
+        # same class (gates decide). VLLM_G128_PREFILL_GLUON_MMA selects
+        # fp16 (default) | bf16.
+        from triton.experimental.gluon import language as _gl
+
+        _mma_mode = os.environ.get("VLLM_G128_PREFILL_GLUON_MMA", "fp16")
+        _mma_dt = _gl.float16 if _mma_mode == "fp16" else _gl.bfloat16
+
+        # GOALOPT iter 9: GQA-packed variant packs all 6 query heads per
+        # CTA row block (10 tokens x 6 heads) so K/V tile and group-scale
+        # loads feed all heads' dots and Q rows are contiguous.
+        # VLLM_G128_PREFILL_PACKED selects packed (default) | per-head.
+        if os.environ.get("VLLM_G128_PREFILL_PACKED", "0") == "1":
+            from vllm.v1.attention.ops.gfx908_g128_gluon_prefill_packed import (
+                g128_prefill_core_packed,
+            )
+
+            g128_prefill_core_packed[(
+                q.shape[0] // 10 + num_seqs,
+                num_kv_heads,
+            )](
+                q, k, v, g8_k_scale, g8_v_scale, block_table, seqused_k,
+                cu_seqlens_q, out,
+                SCALE=softmax_scale,
+                NUM_SEQS=num_seqs,
+                NUM_QHEADS=num_query_heads,
+                NQ_PER_KV=num_queries_per_kv,
+                BLOCK_SIZE=block_size,
+                QTOKENS_PER_CTA=10,
+                BT_STRIDE=block_table.stride(0),
+                Q_STRIDE0=q.stride(0),
+                Q_STRIDE1=q.stride(1),
+                K_STRIDE0=k.stride(0),
+                K_STRIDE1=k.stride(1),
+                K_STRIDE2=k.stride(2),
+                V_STRIDE0=v.stride(0),
+                V_STRIDE1=v.stride(1),
+                V_STRIDE2=v.stride(2),
+                S_STRIDE0=g8_k_scale.stride(0),
+                S_STRIDE1=g8_k_scale.stride(1),
+                S_STRIDE2=g8_k_scale.stride(2),
+                OUT_STRIDE0=out.stride(0),
+                OUT_STRIDE1=out.stride(1),
+                MMA_DT=_mma_dt,
+                MMA_FP16=(_mma_mode == "fp16"),
+                num_warps=4,
+            )
+            return
+
+        cdna2_kwargs = {}
+        if use_cdna2_prefill:
+            cdna2_tile = int(os.environ.get("VLLM_G128_PREFILL_CDNA2_TILE", "32"))
+            if cdna2_tile not in (32, 64, 128) or block_size % cdna2_tile:
+                raise ValueError("CDNA2 prefill tile must divide the KV page")
+            cdna2_kwargs["KV_TILE"] = cdna2_tile
+        g128_prefill_core[(
+            q.shape[0] // 64 + num_seqs,
+            num_query_heads,
+        )](
+            q, k, v, g8_k_scale, g8_v_scale, block_table, seqused_k,
+            cu_seqlens_q, out,
+            SCALE=softmax_scale,
+            NUM_SEQS=num_seqs,
+            NUM_QHEADS=num_query_heads,
+            NQ_PER_KV=num_queries_per_kv,
+            BLOCK_SIZE=block_size,
+            BT_STRIDE=block_table.stride(0),
+            Q_STRIDE0=q.stride(0),
+            Q_STRIDE1=q.stride(1),
+            K_STRIDE0=k.stride(0),
+            K_STRIDE1=k.stride(1),
+            K_STRIDE2=k.stride(2),
+            V_STRIDE0=v.stride(0),
+            V_STRIDE1=v.stride(1),
+            V_STRIDE2=v.stride(2),
+            S_STRIDE0=g8_k_scale.stride(0),
+            S_STRIDE1=g8_k_scale.stride(1),
+            S_STRIDE2=g8_k_scale.stride(2),
+            OUT_STRIDE0=out.stride(0),
+            OUT_STRIDE1=out.stride(1),
+            MMA_DT=_mma_dt,
+            MMA_FP16=(_mma_mode == "fp16"),
+            WIDE_KV=(
+                os.environ.get("VLLM_G128_PREFILL_WIDEKV", "0") == "1"
+            ),
+            **cdna2_kwargs,
+            num_warps=4,
+        )
+        return
 
     kernel_unified_attention[grid](
         output_ptr=out,

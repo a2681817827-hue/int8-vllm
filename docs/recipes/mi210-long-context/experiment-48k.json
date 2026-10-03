@@ -1,0 +1,54 @@
+{
+  "exp": "MI210_CDNA2_G128_LONG_CONTEXT_48K_AB",
+  "hardware": "1x MI210 gfx90a 64GB 300W",
+  "target": "Qwen3.8-27B-PTQR-R10S60",
+  "draft": "dflash2-ptqr-r1",
+  "context_limit": 65536,
+  "actual_input_tokens": 48081,
+  "output_tokens": 512,
+  "tp": 1,
+  "server_max_seqs": 8,
+  "client_concurrency": 1,
+  "spec_tokens": 13,
+  "kv": "int8_block_g128 target+draft",
+  "mamba": "float32",
+  "baseline": {
+    "ttft_seconds": [
+      152.4193249230011,
+      151.0415933789991,
+      18.044206116996065
+    ],
+    "decode_toks_per_second_estimate": [
+      42.94292757850596,
+      42.57292634599782,
+      42.579327871104745
+    ],
+    "wall_output_toks_per_second": [
+      3.1158904710518995,
+      3.140244236873497,
+      17.040845059268452
+    ],
+    "raw": "generic-48k.jsonl"
+  },
+  "candidate": {
+    "ttft_seconds": [
+      37.64457733999734,
+      36.591320758998336,
+      3.5068973369998275
+    ],
+    "decode_toks_per_second_estimate": [
+      87.67884287466775,
+      84.7896238001519,
+      84.89118878840284
+    ],
+    "wall_output_toks_per_second": [
+      11.777471635405767,
+      12.01366112347553,
+      53.74485237749332
+    ],
+    "raw": "cdna2-48k.jsonl"
+  },
+  "quality_gate": "12 TP1+draft synthetic boundary cases relative_L2<1%; text/vision/61k retrieval smoke; full model fidelity not measured",
+  "raw_directory": "docs/recipes/mi210-long-context",
+  "verdict": "native BF16 CDNA2 tile64 prefill+decode: median decode estimate 84.89 vs 42.58 tok/s (1.99x); uncached-shape TTFT ~36.59 vs 151.04 seconds; preserve precision and PTQR weights"
+}

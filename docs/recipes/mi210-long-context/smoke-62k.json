@@ -1,0 +1,58 @@
+[
+  {
+    "probe": "arithmetic",
+    "seconds": 0.38742076200287556,
+    "usage": {
+      "prompt_tokens": 25,
+      "total_tokens": 28,
+      "completion_tokens": 3,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    },
+    "output": "42",
+    "expected_fragment_present": true,
+    "scope": "smoke_only_not_fidelity_eval"
+  },
+  {
+    "probe": "capital",
+    "seconds": 0.2017636099990341,
+    "usage": {
+      "prompt_tokens": 22,
+      "total_tokens": 24,
+      "completion_tokens": 2,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    },
+    "output": "Paris",
+    "expected_fragment_present": true,
+    "scope": "smoke_only_not_fidelity_eval"
+  },
+  {
+    "probe": "vision",
+    "seconds": 0.5040349659975618,
+    "usage": {
+      "prompt_tokens": 91,
+      "total_tokens": 93,
+      "completion_tokens": 2,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    },
+    "output": "Red",
+    "expected_fragment_present": true,
+    "scope": "smoke_only_not_fidelity_eval"
+  },
+  {
+    "probe": "62000_token_retrieval",
+    "seconds": 51.58351488700282,
+    "usage": {
+      "prompt_tokens": 61287,
+      "total_tokens": 61297,
+      "completion_tokens": 10,
+      "prompt_tokens_details": null,
+      "completion_tokens_details": null
+    },
+    "output": "MI210-7391",
+    "expected_fragment_present": true,
+    "scope": "smoke_only_not_fidelity_eval"
+  }
+]
