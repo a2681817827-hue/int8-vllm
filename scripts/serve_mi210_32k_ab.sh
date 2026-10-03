@@ -32,6 +32,12 @@ if [[ -n ${MI210_UA_3D_MAXQ:-} ]]; then
   }
   experiment_args=(-e "VLLM_UA_3D_MAXQ=$MI210_UA_3D_MAXQ")
 fi
+if [[ -n ${MI210_FLASH_SPLITS:-} ]]; then
+  [[ $MI210_FLASH_SPLITS =~ ^(8|16|32|64)$ ]] || {
+    echo 'MI210_FLASH_SPLITS must be 8, 16, 32 or 64' >&2; exit 2;
+  }
+  experiment_args+=(-e "VLLM_MI210_FLASH_SPLITS=$MI210_FLASH_SPLITS")
+fi
 if [[ -n ${MI210_JIT_CACHE:-} ]]; then
   cache_args=(-v "$MI210_JIT_CACHE:/mi210-jit" -e AITER_JIT_DIR=/mi210-jit)
 fi

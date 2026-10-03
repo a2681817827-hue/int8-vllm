@@ -52,8 +52,19 @@ if __name__ == "__main__":
     parser.add_argument("--query", type=int, default=512)
     parser.add_argument("--arm", action="append", choices=list(ARMS))
     parser.add_argument("--split", action="store_true")
+    parser.add_argument("--target-splits", type=int, choices=(8, 16, 32, 64),
+                        help="Experimental fixed TP1 CDNA2 target split count")
+    parser.add_argument("--segment-capacity", type=int, choices=(16, 64), default=16,
+                        help="Use 64 to match production target scratch buffers")
     parser.add_argument("--kv-heads", type=int, choices=(1, 4), default=4)
     args = parser.parse_args()
+    if args.target_splits and (not args.split or args.kv_heads != 4
+                              or args.query > 16):
+        parser.error("--target-splits needs --split, --kv-heads 4 and query <=16")
+    if args.target_splits:
+        os.environ["VLLM_MI210_FLASH_SPLITS"] = str(args.target_splits)
+    else:
+        os.environ.pop("VLLM_MI210_FLASH_SPLITS", None)
     import torch
     assert torch.cuda.get_device_properties(0).gcnArchName.split(":")[0] == "gfx90a"
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +76,8 @@ if __name__ == "__main__":
                            **ARMS[name]})
         row = {"arm": name, "env": ARMS[name], "context": args.context,
                "query": args.query, "block_size": 1728, "split": args.split, "kv_heads": args.kv_heads, "heads": args.kv_heads * 6}
+        row["target_splits"] = args.target_splits
+        row["segment_capacity"] = 64 if args.target_splits else args.segment_capacity
         tracker = None
         module = None
         original = None
@@ -87,7 +100,8 @@ if __name__ == "__main__":
             setattr(module, symbol, tracker)
         try:
             row.update(check_attention(256, args.kv_heads * 6, args.kv_heads, args.query, True, args.split,
-                                       args.context, 1728, benchmark_repeats=5))
+                                       args.context, 1728, benchmark_repeats=5,
+                                       segment_capacity=row["segment_capacity"]))
             if tracker is not None:
                 row["candidate_launches"] = tracker.launches
                 if not tracker.launches:
@@ -102,3 +116,5 @@ if __name__ == "__main__":
             file.write(json.dumps(row) + "\n")
         print(json.dumps(row), flush=True)
         torch.cuda.empty_cache()
+        if row["numeric"] != "PASS":
+            raise SystemExit(1)

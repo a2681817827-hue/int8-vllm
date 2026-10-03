@@ -5,7 +5,8 @@ import os
 
 
 def check_attention(head_size, heads, kv_heads, query_len, causal, split,
-                    seq_len=1024, block_size=64, benchmark_repeats=0):
+                    seq_len=1024, block_size=64, benchmark_repeats=0,
+                    segment_capacity=16):
     import torch
 
     from vllm.v1.attention.ops.triton_unified_attention import unified_attention
@@ -40,13 +41,13 @@ def check_attention(head_size, heads, kv_heads, query_len, causal, split,
     segments = {}
     if split:
         segments = {
-            "num_par_softmax_segments": 16,
-            "softmax_segm_output": torch.empty((query_len, heads, 16, head_size),
+            "num_par_softmax_segments": segment_capacity,
+            "softmax_segm_output": torch.empty((query_len, heads, segment_capacity, head_size),
                                                device="cuda"),
-            "softmax_segm_max": torch.empty((query_len, heads, 16), device="cuda"),
-            "softmax_segm_expsum": torch.empty((query_len, heads, 16), device="cuda"),
+            "softmax_segm_max": torch.empty((query_len, heads, segment_capacity), device="cuda"),
+            "softmax_segm_expsum": torch.empty((query_len, heads, segment_capacity), device="cuda"),
             "seq_threshold_3D": 1,
-            "max_flash_decoding_splits": 16,
+            "max_flash_decoding_splits": segment_capacity,
         }
     window = (-1, -1) if causal else (127, 127)
     args = (q, k, v, out,

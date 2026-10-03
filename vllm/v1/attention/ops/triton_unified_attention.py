@@ -1383,6 +1383,34 @@ def unified_attention(
     else:
         actual_num_splits = num_par_softmax_segments if use_3d else 1
 
+    # Experimental target-only split count. Fixed during graph capture and
+    # replay; surplus segments are masked by the existing core and reducer.
+    # Keep draft SWA and default dispatch unchanged when the env is absent.
+    mi210_splits = os.environ.get("VLLM_MI210_FLASH_SPLITS")
+    if (
+        mi210_splits is not None
+        and use_3d
+        and use_g8
+        and kv_quant_mode == KVQuantMode.INT8_BLOCK_G128
+        and head_size == 256
+        and num_kv_heads == 4
+        and num_queries_per_kv == 6
+        and use_causal
+        and sliding_window_val == 0
+        and os.environ.get("VLLM_G128_DECODE_CDNA2") == "1"
+        and current_platform.is_rocm()
+    ):
+        from vllm.platforms.rocm import on_gfx90a
+        from vllm.v1.attention.ops.mi210_split_tuning import validate_mi210_splits
+
+        if on_gfx90a():
+            capacity = min(
+                softmax_segm_output.shape[2],
+                softmax_segm_max.shape[2],
+                softmax_segm_expsum.shape[2],
+            )
+            actual_num_splits = validate_mi210_splits(mi210_splits, capacity)
+
     grid: tuple[Any, ...]
     if not use_3d:
         grid = (total_num_q_blocks, num_kv_heads)

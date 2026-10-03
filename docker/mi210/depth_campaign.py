@@ -22,6 +22,8 @@ def commands(args):
                  "--api-key-env", args.api_key_env, "--output", str(output)]
         for url, label in zip(args.url, args.label):
             bench.extend(["--url", url, "--label", label])
+        if args.image_id:
+            bench.extend(["--image-id", args.image_id])
         yield depth, output, generate, bench
 
 
@@ -37,6 +39,7 @@ def main():
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--api-key-env", default="MI210_API_KEY")
+    parser.add_argument("--image-id", help="Measured Docker image ID for artifact provenance")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--execute", action="store_true",
                         help="Without this option, print commands without sending requests")
